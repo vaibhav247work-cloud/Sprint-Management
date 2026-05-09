@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # SprintForge — Sprint Management Tool
 
 A zero-dependency, browser-based sprint management web app for tech managers.
@@ -62,3 +63,6 @@ Orange accent system · Responsive layout
 
 ---
 Built for tech managers who need to move fast without heavy tooling.
+=======
+# Sprint-Management
+>>>>>>> cce041a9c2a75f24e03772788650281b5486f336
