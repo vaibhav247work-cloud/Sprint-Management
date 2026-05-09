@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  sprint-manager:
+    build: .
+    container_name: sprint-manager-app
+    ports:
+      - "3000:3000"
+    volumes:
+      - sprint-manager-data:/usr/src/app/data
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+
+volumes:
+  sprint-manager-data:
+    name: sprint-manager-data
