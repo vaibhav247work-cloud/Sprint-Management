@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="SprintForge — Professional sprint management: plan, track dependencies, detect overloads, retrospectives, and auto-reports.">
+  <title>SprintForge — Sprint Management</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="features.css">
+  <link rel="stylesheet" href="theme.css">
+</head>
+<body>
+
+  <!-- ANIMATED BACKGROUND MESH -->
+  <div class="bg-mesh" aria-hidden="true">
+    <div class="mesh-orb orb-1"></div>
+    <div class="mesh-orb orb-2"></div>
+    <div class="mesh-orb orb-3"></div>
+    <div class="mesh-grid"></div>
+  </div>
+
+  <!-- TOP NAV -->
+  <nav class="topnav" role="navigation" aria-label="Main navigation">
+    <div class="nav-brand">
+      <div class="brand-icon" aria-hidden="true">
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+          <path d="M2 2h6v6H2zM10 2h6v6h-6zM2 10h6v6H2zM13 10v6M10 13h6" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <span class="brand-name">SprintForge</span>
+      <span class="brand-tag">v3.0</span>
+    </div>
+
+    <div class="nav-tabs" id="nav-tabs" role="tablist">
+      <button class="nav-tab active" data-view="dashboard" role="tab" id="tab-dashboard" aria-selected="true">
+        <svg class="tab-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+          <rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>
+        </svg>
+        Dashboard
+      </button>
+      <button class="nav-tab" data-view="sprints" role="tab" id="tab-sprints" aria-selected="false">
+        <svg class="tab-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 3"/>
+        </svg>
+        Sprints
+      </button>
+      <button class="nav-tab" data-view="timeline" role="tab" id="tab-timeline" aria-selected="false">
+        <svg class="tab-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <path d="M3 6h18M3 12h18M3 18h12"/>
+        </svg>
+        Timeline
+      </button>
+      <button class="nav-tab" data-view="resources" role="tab" id="tab-resources" aria-selected="false">
+        <svg class="tab-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <circle cx="8" cy="8" r="4"/><circle cx="16" cy="8" r="4"/>
+          <path d="M2 20c0-4 3-6 6-6M16 14c3 0 6 2 6 6"/>
+        </svg>
+        Resources
+      </button>
+      <button class="nav-tab" data-view="reports" role="tab" id="tab-reports" aria-selected="false">
+        <svg class="tab-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <path d="M18 20V10M12 20V4M6 20v-6"/>
+        </svg>
+        Reports
+      </button>
+      <button class="nav-tab" data-view="logs" role="tab" id="tab-logs" aria-selected="false">
+        <svg class="tab-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <path d="M9 12h6M9 16h4M17 21H7a2 2 0 01-2-2V5a2 2 0 012-2h7l5 5v11a2 2 0 01-2 2z"/>
+        </svg>
+        Logs
+      </button>
+    </div>
+
+    <div class="nav-search">
+      <div class="search-wrap">
+        <svg class="search-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
+        </svg>
+        <input type="search" id="global-search" class="search-input" placeholder="Search tasks... (/)" autocomplete="off">
+        <kbd class="search-kbd" id="search-kbd">/</kbd>
+      </div>
+    </div>
+    <div class="nav-actions">
+      <button class="btn-ghost nav-icon-btn" id="btn-shortcuts" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <rect x="2" y="6" width="20" height="13" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8"/>
+        </svg>
+      </button>
+      <button class="btn-ghost nav-icon-btn" id="btn-export" aria-label="Export to CSV" title="Export CSV">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+        </svg>
+      </button>
+      <button class="btn-primary" id="btn-new-sprint" aria-label="Create new sprint">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+          <path d="M12 5v14M5 12h14"/>
+        </svg>
+        New Sprint
+      </button>
+    </div>
+  </nav>
+
+  <!-- OVERLOAD ALERT BANNER -->
+  <div id="overload-banner" class="overload-banner hidden" role="alert"></div>
+  <!-- SCOPE CREEP BANNER -->
+  <div id="scope-banner" class="scope-banner hidden" role="alert"></div>
+
+  <!-- MAIN AREA -->
+  <main class="main-content" role="main">
+    <div class="view active" id="view-dashboard" role="tabpanel" aria-labelledby="tab-dashboard"></div>
+    <div class="view" id="view-sprints"   role="tabpanel" aria-labelledby="tab-sprints"></div>
+    <div class="view" id="view-timeline"  role="tabpanel" aria-labelledby="tab-timeline"></div>
+    <div class="view" id="view-resources" role="tabpanel" aria-labelledby="tab-resources"></div>
+    <div class="view" id="view-reports"   role="tabpanel" aria-labelledby="tab-reports"></div>
+    <div class="view" id="view-logs"      role="tabpanel" aria-labelledby="tab-logs"></div>
+  </main>
+
+  <!-- MODAL OVERLAY -->
+  <div id="modal-overlay" class="modal-overlay hidden" onclick="closeModalOnOverlay(event)" role="dialog" aria-modal="true">
+    <div id="modal-box" class="modal-box">
+      <button class="modal-close" onclick="closeModal()" aria-label="Close modal">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+          <path d="M18 6L6 18M6 6l12 12"/>
+        </svg>
+      </button>
+      <div id="modal-content"></div>
+    </div>
+  </div>
+
+  <!-- TOAST -->
+  <div id="toast" class="toast hidden" role="alert" aria-live="polite"></div>
+
+  <script src="app.js"></script>
+  <script src="features-core.js"></script>
+  <script src="features-views.js"></script>
+  <script src="features-patch.js"></script>
+</body>
+</html>
