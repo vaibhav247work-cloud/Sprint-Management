@@ -342,14 +342,16 @@ renderDashboard = function() {
   }
 };
 
-// ── INIT PATCH ────────────────────────────────────────────────
+// ── INIT PATCH ───────────────────────────────────────────────
 const _origInit = init;
-init = function() {
-  _origInit();
+init = async function() {
+  await _origInit();
   migrateState();
   checkAndShowBanners();
+  initDragDrop();
+  initTheme();
 
-  // Wire up keyboard shortcuts for new tabs
+  // Extra keyboard shortcuts for new tabs
   document.addEventListener('keydown', e => {
     const tag = document.activeElement.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
@@ -357,6 +359,141 @@ init = function() {
     if (e.key === '6') setView('logs');
   });
 };
+// NOTE: init() is called ONCE in app.js. Do NOT call it again here.
 
-// Re-init to apply patches
-init();
+// ── DRAG AND DROP (Kanban) ──────────────────────────────────
+let _dragTaskId = null;
+
+function initDragDrop() {
+  document.addEventListener('dragstart', e => {
+    const card = e.target.closest('.task-card');
+    if (!card) return;
+    _dragTaskId = card.dataset.taskId;
+    card.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+  });
+  document.addEventListener('dragend', e => {
+    const card = e.target.closest('.task-card');
+    if (card) card.classList.remove('dragging');
+    document.querySelectorAll('.kanban-col').forEach(col => col.classList.remove('drag-over'));
+    _dragTaskId = null;
+  });
+  document.addEventListener('dragover', e => {
+    const col = e.target.closest('.kanban-col');
+    if (!col) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    document.querySelectorAll('.kanban-col').forEach(c => c.classList.remove('drag-over'));
+    col.classList.add('drag-over');
+  });
+  document.addEventListener('dragleave', e => {
+    const col = e.target.closest('.kanban-col');
+    if (col && !col.contains(e.relatedTarget)) col.classList.remove('drag-over');
+  });
+  document.addEventListener('drop', e => {
+    const col = e.target.closest('.kanban-col');
+    if (!col || !_dragTaskId) return;
+    e.preventDefault();
+    col.classList.remove('drag-over');
+    const newStatus = col.dataset.status;
+    if (newStatus && _dragTaskId) moveTask(_dragTaskId, newStatus);
+  });
+}
+
+// Patch renderKanban to make cards draggable and cols droppable
+const _origRenderKanbanPatch2 = renderKanban;
+renderKanban = function(sprintId) {
+  const cols = [
+    { key:'todo',       cls:'col-todo' },
+    { key:'inprogress', cls:'col-inprogress' },
+    { key:'done',       cls:'col-done' },
+    { key:'blocked',    cls:'col-blocked' },
+  ];
+  const colsHtml = cols.map(({key,cls}) => {
+    let tasks = tasksByStatus(sprintId, key);
+    if (sprintFilter.priority !== 'all') tasks = tasks.filter(t => t.priority === sprintFilter.priority);
+    if (sprintFilter.assignee !== 'all') tasks = tasks.filter(t => t.assigneeId === sprintFilter.assignee);
+    const cards = tasks.map(t => {
+      const html = renderTaskCard(t);
+      // inject draggable + data-task-id attrs
+      return html.replace('<div class="task-card', `<div draggable="true" data-task-id="${t.id}" class="task-card`);
+    }).join('');
+    const allCount = tasksByStatus(sprintId, key).length;
+    const filtered = tasks.length !== allCount ? `<span style="color:var(--accent);margin-left:4px">${tasks.length}/${allCount}</span>` : '';
+    return `<div class="kanban-col ${cls}" data-status="${key}">
+      <div class="kanban-col-header">
+        <span class="kanban-col-title">${STATUS_LABEL[key]}</span>
+        <span class="kanban-col-count">${tasks.length}${filtered}</span>
+      </div>
+      <div class="task-cards">${cards}</div>
+      <button class="add-task-btn" onclick="openTaskModal('${sprintId}','${key}')">+ Add Task</button>
+    </div>`;
+  }).join('');
+  return `<div class="kanban-columns">${colsHtml}</div>`;
+};
+
+// ── THEME TOGGLE ──────────────────────────────────────────────
+function initTheme() {
+  const saved = localStorage.getItem('sf_theme') || 'dark';
+  document.documentElement.dataset.theme = saved;
+  const btn = document.getElementById('btn-theme');
+  if (btn) updateThemeBtn(btn, saved);
+}
+function toggleTheme() {
+  const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = next;
+  localStorage.setItem('sf_theme', next);
+  const btn = document.getElementById('btn-theme');
+  if (btn) updateThemeBtn(btn, next);
+}
+function updateThemeBtn(btn, theme) {
+  btn.innerHTML = theme === 'dark'
+    ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>`
+    : `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>`;
+  btn.title = theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode';
+}
+
+// ── CROSS-SPRINT DEPENDENCIES FIX ─────────────────────────────
+// Override renderDependencySelector to allow cross-sprint deps
+renderDependencySelector = function(sprintId, currentTaskId, selectedDeps) {
+  const available = state.tasks.filter(t => t.id !== currentTaskId);
+  if (!available.length) return '<div style="color:var(--text3);font-size:12px;padding:8px 0">No other tasks available</div>';
+  // Group by sprint
+  const bySprintId = {};
+  available.forEach(t => { (bySprintId[t.sprintId] = bySprintId[t.sprintId]||[]).push(t); });
+  return Object.entries(bySprintId).map(([sid, tasks]) => {
+    const s = getSprint(sid);
+    const header = `<div style="font-size:10px;color:var(--text3);font-family:var(--mono);padding:4px 0 2px;border-bottom:1px solid var(--border2);margin-bottom:4px">${escHtml(s?.name||sid)}</div>`;
+    const rows = tasks.map(t => {
+      const checked = selectedDeps.includes(t.id) ? 'checked' : '';
+      return `<label class="dep-checkbox-row">
+        <input type="checkbox" class="dep-checkbox" value="${t.id}" ${checked}>
+        <span class="dep-task-name">${escHtml(t.title)}</span>
+        <span class="task-type-badge type-${t.type}">${t.type}</span>
+      </label>`;
+    }).join('');
+    return header + rows;
+  }).join('');
+};
+
+// ── LOG PAGINATION ───────────────────────────────────────────
+let _logPage = 0;
+const LOG_PAGE_SIZE = 25;
+
+function loadMoreLogs() {
+  _logPage++;
+  renderLogs();
+}
+
+// ── PRINT REPORT FIX ────────────────────────────────────────
+function printReport() {
+  const el = document.getElementById('printable-report');
+  if (!el) { showToast('Select a sprint first', 'error'); return; }
+  document.title = 'SprintForge Report';
+  const prevOverflow = document.body.style.overflow;
+  // Add a print-only class, trigger browser print, then restore
+  document.body.classList.add('printing');
+  window.print();
+  document.body.classList.remove('printing');
+  document.title = 'SprintForge — Sprint Management';
+}

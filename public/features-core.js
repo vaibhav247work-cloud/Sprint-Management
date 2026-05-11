@@ -371,7 +371,7 @@ function getSelectedDeps() {
 
 // Patch saveTask to handle dependencies and scope addition
 const _origSaveTask = saveTask;
-saveTask = function(id, defaultSprintId) {
+saveTask = async function(id, defaultSprintId) {
   const title   = document.getElementById('ft-title')?.value.trim();
   const sprint  = document.getElementById('ft-sprint')?.value;
   const assignee= document.getElementById('ft-assignee')?.value;
@@ -382,6 +382,9 @@ saveTask = function(id, defaultSprintId) {
   const est     = parseFloat(document.getElementById('ft-est')?.value) || 0;
   const log     = parseFloat(document.getElementById('ft-log')?.value) || 0;
   const desc    = document.getElementById('ft-desc')?.value.trim();
+  const dueDate = document.getElementById('ft-due')?.value || '';
+  const tags    = (document.getElementById('ft-tags')?.value || '')
+    .split(',').map(s => s.trim()).filter(Boolean);
   const deps    = getSelectedDeps();
 
   if (!title) { showToast('Task title is required', 'error'); return; }
@@ -392,16 +395,33 @@ saveTask = function(id, defaultSprintId) {
 
   if (id) {
     const t = state.tasks.find(x => x.id === id);
-    Object.assign(t, { title, description: desc, sprintId: sprint, assigneeId: assignee,
-      type, priority: prio, status, storyPoints: sp, estimatedHours: est, loggedHours: log, dependsOn: deps });
+    const doneDate = (status === 'done' && t?.status !== 'done') ? today() : (t?.doneDate || '');
+    const updates = {
+      title, description: desc, sprintId: sprint, assigneeId: assignee,
+      type, priority: prio, status, storyPoints: sp, estimatedHours: est, loggedHours: log,
+      dueDate, doneDate, tags,
+      dependsOn: deps, scopeAddition: t?.scopeAddition || false, originalSprint: t?.originalSprint || sprint
+    };
+    Object.assign(t, updates);
+    await api.put(`/api/tasks/${id}`, updates).catch(console.error);
     addLog(LOG_TYPES.STATUS_CHANGED, { taskId: id, taskTitle: title, newStatus: status, assignee });
   } else {
+    const idFromApi = 't' + genId();
     const newTask = {
-      id: 't' + genId(), sprintId: sprint, title, description: desc,
+      id: idFromApi, sprintId: sprint, title, description: desc,
       type, priority: prio, status, assigneeId: assignee,
       estimatedHours: est, loggedHours: log, storyPoints: sp,
-      dependsOn: deps, delayReasons: [], scopeAddition: isActiveSprint, originalSprint: sprint,
+      dueDate, doneDate: '', tags,
+      dependsOn: deps, delayReasons: [], comments: [],
+      scopeAddition: isActiveSprint, originalSprint: sprint,
     };
+    const res = await api.post('/api/tasks', {
+      sprintId: sprint, title, description: desc, type, priority: prio, status,
+      assigneeId: assignee, estimatedHours: est, loggedHours: log, storyPoints: sp,
+      dueDate, doneDate: '', tags, dependsOn: deps,
+      scopeAddition: isActiveSprint, originalSprint: sprint
+    }).catch(console.error);
+    if (res?.id) newTask.id = res.id;
     state.tasks.push(newTask);
     addLog(LOG_TYPES.TASK_CREATED, { taskId: newTask.id, taskTitle: title, sprintId: sprint,
       assignee, estimatedHours: est });

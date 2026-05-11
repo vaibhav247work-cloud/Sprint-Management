@@ -5,15 +5,19 @@
   "main": "app.js",
   "scripts": {
     "start": "node server.js",
+    "dev": "nodemon server.js",
+    "lint": "eslint public/app.js public/features-*.js server.js --no-eslintrc --rule '{no-undef: warn}'",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": [],
+  "keywords": ["sprint","agile","kanban","project-management"],
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "body-parser": "^2.2.2",
     "cors": "^2.8.6",
     "express": "^5.2.1",
     "sqlite3": "^6.0.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
   }
 }

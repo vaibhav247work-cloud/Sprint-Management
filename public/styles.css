@@ -151,6 +151,16 @@ body {
 .btn-ghost:hover { background: rgba(255, 255, 255, 0.1); color: var(--text); border-color: var(--border); transform: translateY(-1px); }
 /* Icon-only compact nav buttons */
 .nav-icon-btn { padding: 7px 9px !important; }
+.nav-icon-btn.sync-alert {
+  color: #ffb4b4;
+  border-color: rgba(255, 71, 87, 0.85);
+  background: rgba(255, 71, 87, 0.2);
+  box-shadow: 0 0 0 1px rgba(255, 71, 87, 0.35) inset;
+}
+.nav-icon-btn.sync-alert:hover {
+  background: rgba(255, 71, 87, 0.28);
+  color: #ffd8d8;
+}
 
 .btn-sm {
   padding: 6px 12px;

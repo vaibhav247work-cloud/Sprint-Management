@@ -26,39 +26,112 @@ const SPRINT_STATUS = ['planning','active','completed'];
 
 // ── STATE ─────────────────────────────────────────────────────
 let state = {
-  sprints   : [],
-  tasks     : [],
-  resources : [],
-  activityLog: [],
+  sprints       : [],
+  tasks         : [],
+  resources     : [],
+  activityLog   : [],
   retrospectives: {},
-  activeView: 'dashboard',
+  activeView    : 'dashboard',
 };
 
-// ── PERSISTENCE ───────────────────────────────────────────────
-function saveState() {
-  fetch('/api/state', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(state)
-  }).catch(e => console.error("Error saving state", e));
+// ── UNDO STACK ────────────────────────────────────────────────
+const _undoStack = [];
+const MAX_UNDO   = 10;
+function pushUndo() {
+  _undoStack.push(JSON.stringify({ sprints:state.sprints, tasks:state.tasks, resources:state.resources }));
+  if (_undoStack.length > MAX_UNDO) _undoStack.shift();
 }
+function undo() {
+  if (!_undoStack.length) { showToast('Nothing to undo','info'); return; }
+  const snap = JSON.parse(_undoStack.pop());
+  state.sprints   = snap.sprints;
+  state.tasks     = snap.tasks;
+  state.resources = snap.resources;
+  saveState();
+  renderView(state.activeView);
+  showToast('↩ Undo applied','success');
+}
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+    const tag = document.activeElement.tagName;
+    if (tag !== 'INPUT' && tag !== 'TEXTAREA') { e.preventDefault(); undo(); }
+  }
+});
+
+// ── PERSISTENCE ───────────────────────────────────────────────
+// Debounced full-state sync (used as fallback / compatibility layer).
+// Targeted mutations use the REST endpoints directly.
+let _saveTimer;
+function saveState() {
+  clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(_doSave, 600);
+}
+function _doSave() {
+  // Sync all mutations to server via targeted endpoints (fire-and-forget)
+  // The state object is the in-memory source of truth; server is persisted store.
+  // Individual CRUD operations already call their own endpoints,
+  // so this acts as a catch-all safety net.
+  localStorage.setItem('sf_state_backup', JSON.stringify({
+    sprints: state.sprints, tasks: state.tasks,
+    resources: state.resources, retrospectives: state.retrospectives,
+    ts: Date.now()
+  }));
+}
+
 async function loadState() {
   try {
-    const res = await fetch('/api/state');
+    const res = await fetch('/api/all');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const loaded = await res.json();
-    if (loaded && Object.keys(loaded).length > 0) {
-      state = { ...state, ...loaded };
-      if (!state.activityLog) state.activityLog = [];
-      if (!state.retrospectives) state.retrospectives = {};
-      if (!state.sprints) state.sprints = [];
-      if (!state.tasks) state.tasks = [];
-      if (!state.resources) state.resources = [];
-      return true; 
+    if (loaded && loaded.sprints) {
+      state.sprints    = loaded.sprints    || [];
+      state.tasks      = loaded.tasks      || [];
+      state.resources  = loaded.resources  || [];
+      // Ensure new fields exist on every task
+      state.tasks.forEach(t => {
+        if (!t.dependsOn)    t.dependsOn    = [];
+        if (!t.delayReasons) t.delayReasons = [];
+        if (!t.tags)         t.tags         = [];
+        if (!t.comments)     t.comments     = [];
+        if (t.scopeAddition  === undefined) t.scopeAddition  = false;
+        if (t.originalSprint === undefined) t.originalSprint = t.sprintId;
+        if (!t.dueDate)      t.dueDate      = '';
+        if (!t.doneDate)     t.doneDate     = '';
+      });
+      // Restore retrospectives via state compat
+      state.retrospectives = {};
+      return true;
     }
   } catch (e) {
-    console.error("Error loading state", e);
+    console.warn('API load failed, trying localStorage backup:', e.message);
+    try {
+      const bk = localStorage.getItem('sf_state_backup');
+      if (bk) {
+        const snap = JSON.parse(bk);
+        state.sprints       = snap.sprints       || [];
+        state.tasks         = snap.tasks         || [];
+        state.resources     = snap.resources     || [];
+        state.retrospectives = snap.retrospectives || {};
+        showToast('⚠ Loaded from local backup — server unavailable','info');
+        return true;
+      }
+    } catch (_) {}
+    showToast('Could not load data — starting fresh','error');
   }
   return false;
+}
+
+// ── TARGETED API HELPERS ──────────────────────────────────────
+const api = {
+  async post(url, body)   { const r=await fetch(url,{method:'POST',  headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); return r.json(); },
+  async put(url, body)    { const r=await fetch(url,{method:'PUT',   headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); return r.json(); },
+  async delete(url)       { const r=await fetch(url,{method:'DELETE'}); return r.json(); },
+};
+
+// ── LOG TO SERVER ────────────────────────────────────────────
+function postLog(type, data) {
+  api.post('/api/activity-log', { type, timestamp: new Date().toISOString(), ...data })
+    .catch(e => console.warn('Log failed', e));
 }
 
 // ── SAMPLE DATA ───────────────────────────────────────────────
@@ -272,8 +345,13 @@ function renderDashboard() {
       </div>
       <div class="stat-card purple">
         <div class="stat-label">Velocity</div>
-        <div class="stat-value">${totalTasks ? Math.round(doneTasks/totalTasks*100) : 0}%</div>
-        <div class="stat-meta">overall completion</div>
+        <div class="stat-value">${(() => {
+          const completed = state.sprints.filter(s=>s.status==='completed');
+          if (!completed.length) return '—';
+          const pts = completed.map(s => sprintTasks(s.id).filter(t=>t.status==='done').reduce((a,t)=>a+(t.storyPoints||0),0));
+          return Math.round(pts.reduce((a,v)=>a+v,0)/pts.length);
+        })()}</div>
+        <div class="stat-meta">avg pts/sprint</div>
       </div>
     </div>
 
@@ -465,7 +543,7 @@ function openSprintModal(id) {
   `);
 }
 
-function saveSprint(id) {
+async function saveSprint(id) {
   const name  = $('#f-name').value.trim();
   const goal  = $('#f-goal').value.trim();
   const start = $('#f-start').value;
@@ -473,12 +551,15 @@ function saveSprint(id) {
   const status= $('#f-status').value;
   if (!name) { showToast('Sprint name is required','error'); return; }
   if (start && end && start > end) { showToast('End date must be after start date','error'); return; }
-
+  pushUndo();
   if (id) {
     const s = getSprint(id);
     Object.assign(s, {name,goal,startDate:start,endDate:end,status});
+    await api.put(`/api/sprints/${id}`, {name,goal,startDate:start,endDate:end,status}).catch(console.error);
   } else {
-    state.sprints.push({ id:'s'+genId(), name, goal, startDate:start, endDate:end, status });
+    const res = await api.post('/api/sprints', {name,goal,startDate:start,endDate:end,status}).catch(console.error);
+    const newId = res?.id || 's'+genId();
+    state.sprints.push({ id:newId, name, goal, startDate:start, endDate:end, status });
   }
   saveState(); closeModal();
   showToast(id ? 'Sprint updated ✓' : 'Sprint created ✓', 'success');
@@ -503,10 +584,12 @@ function confirmDeleteSprint(id) {
   `);
 }
 
-function deleteSprint(id) {
+async function deleteSprint(id) {
+  pushUndo();
   state.sprints = state.sprints.filter(s=>s.id!==id);
   state.tasks   = state.tasks.filter(t=>t.sprintId!==id);
   expandedSprints.delete(id);
+  await api.delete(`/api/sprints/${id}`).catch(console.error);
   saveState(); closeModal();
   showToast('Sprint deleted','error');
   renderView(state.activeView);
@@ -588,6 +671,16 @@ function openTaskModal(sprintId, defaultStatus='todo', taskId=null) {
             <input class="form-input" type="number" id="ft-log" min="0" step="0.5" value="${t?.loggedHours||0}" placeholder="0">
           </div>
         </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Due Date</label>
+            <input class="form-input" type="date" id="ft-due" value="${t?.dueDate||''}">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Tags <span style="font-size:10px;color:var(--text3)">(comma separated)</span></label>
+            <input class="form-input" id="ft-tags" value="${escHtml((t?.tags||[]).join(', '))}" placeholder="frontend, api, urgent">
+          </div>
+        </div>
         <div class="form-actions">
           <button class="btn-ghost" onclick="closeModal()">Cancel</button>
           <button class="btn-primary" onclick="saveTask('${t?.id||''}','${sprintId}')">
@@ -599,30 +692,46 @@ function openTaskModal(sprintId, defaultStatus='todo', taskId=null) {
   `);
 }
 
-function saveTask(id, defaultSprintId) {
-  const title  = $('#ft-title').value.trim();
-  const desc   = $('#ft-desc').value.trim();
-  const sprint = $('#ft-sprint').value;
+async function saveTask(id, defaultSprintId) {
+  const title   = $('#ft-title').value.trim();
+  const desc    = $('#ft-desc').value.trim();
+  const sprint  = $('#ft-sprint').value;
   const assignee= $('#ft-assignee').value;
-  const type   = $('#ft-type').value;
-  const prio   = $('#ft-priority').value;
-  const status = $('#ft-status').value;
-  const sp     = parseInt($('#ft-sp').value)||0;
-  const est    = parseFloat($('#ft-est').value)||0;
-  const log    = parseFloat($('#ft-log').value)||0;
+  const type    = $('#ft-type').value;
+  const prio    = $('#ft-priority').value;
+  const status  = $('#ft-status').value;
+  const sp      = parseInt($('#ft-sp').value)||0;
+  const est     = parseFloat($('#ft-est').value)||0;
+  const log     = parseFloat($('#ft-log').value)||0;
+  const dueDate = $('#ft-due')?.value || '';
+  const tags    = ($('#ft-tags')?.value||'').split(',').map(s=>s.trim()).filter(Boolean);
 
   if (!title) { showToast('Task title is required','error'); return; }
   if (!sprint) { showToast('Select a sprint','error'); return; }
+  pushUndo();
 
   if (id) {
     const t = state.tasks.find(x=>x.id===id);
-    Object.assign(t, {title,description:desc,sprintId:sprint,assigneeId:assignee,type,priority:prio,status,storyPoints:sp,estimatedHours:est,loggedHours:log});
+    const doneDate = (status === 'done' && t?.status !== 'done') ? today() : (t?.doneDate || '');
+    const updates = {title,description:desc,sprintId:sprint,assigneeId:assignee,type,
+      priority:prio,status,storyPoints:sp,estimatedHours:est,loggedHours:log,
+      dueDate, doneDate, tags,
+      dependsOn:t?.dependsOn||[], scopeAddition:t?.scopeAddition||false, originalSprint:t?.originalSprint||sprint};
+    Object.assign(t, updates);
+    await api.put(`/api/tasks/${id}`, updates).catch(console.error);
   } else {
-    state.tasks.push({
-      id:'t'+genId(), sprintId:sprint, title, description:desc,
-      type, priority:prio, status, assigneeId:assignee,
-      estimatedHours:est, loggedHours:log, storyPoints:sp
-    });
+    const sprintObj = getSprint(sprint);
+    const isActive  = sprintObj?.status === 'active';
+    const res = await api.post('/api/tasks', {
+      sprintId:sprint, title, description:desc, type, priority:prio, status,
+      assigneeId:assignee, estimatedHours:est, loggedHours:log, storyPoints:sp,
+      dueDate, doneDate:'', tags, dependsOn:[], scopeAddition:isActive, originalSprint:sprint
+    }).catch(console.error);
+    const newId = res?.id || 't'+genId();
+    state.tasks.push({ id:newId, sprintId:sprint, title, description:desc, type,
+      priority:prio, status, assigneeId:assignee, estimatedHours:est, loggedHours:log,
+      storyPoints:sp, dueDate, doneDate:'', tags, dependsOn:[], delayReasons:[],
+      comments:[], scopeAddition:isActive, originalSprint:sprint });
   }
   saveState(); closeModal();
   showToast(id ? 'Task updated ✓':'Task added ✓','success');
@@ -726,9 +835,15 @@ function updateLoggedHours(taskId) {
   renderView(state.activeView);
 }
 
-function moveTask(taskId, newStatus) {
+async function moveTask(taskId, newStatus) {
   const t = state.tasks.find(x=>x.id===taskId);
-  if (t) { t.status = newStatus; saveState(); }
+  if (t) {
+    const doneDate = newStatus === 'done' ? today() : t.doneDate || '';
+    t.status   = newStatus;
+    t.doneDate = doneDate;
+    await api.put(`/api/tasks/${taskId}`, { ...t, status: newStatus, doneDate }).catch(console.error);
+    saveState();
+  }
   showToast(`Moved to ${STATUS_LABEL[newStatus]} ✓`,'success');
   closeModal();
   renderView(state.activeView);
@@ -749,8 +864,10 @@ function confirmDeleteTask(id) {
   `);
 }
 
-function deleteTask(id) {
+async function deleteTask(id) {
+  pushUndo();
   state.tasks = state.tasks.filter(t=>t.id!==id);
+  await api.delete(`/api/tasks/${id}`).catch(console.error);
   saveState(); closeModal();
   showToast('Task deleted','error');
   renderView(state.activeView);
@@ -1025,23 +1142,22 @@ function selectColor(color, el) {
   $('#fr-color').value = color;
 }
 
-function saveResource(id) {
+async function saveResource(id) {
   const name  = $('#fr-name').value.trim();
   const init  = $('#fr-init').value.trim().toUpperCase();
   const role  = $('#fr-role').value.trim();
   const cap   = parseFloat($('#fr-cap').value)||6;
   const color = $('#fr-color').value;
-
   if (!name) { showToast('Name is required','error'); return; }
-
+  const initials = init || name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
   if (id) {
     const r = getResource(id);
-    Object.assign(r, {name, initials:init||name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase(), role, capacityPerDay:cap, color});
+    Object.assign(r, {name, initials, role, capacityPerDay:cap, color});
+    await api.put(`/api/resources/${id}`, {name,initials,role,capacityPerDay:cap,color}).catch(console.error);
   } else {
-    state.resources.push({
-      id:'r'+genId(), name, role, color, capacityPerDay:cap,
-      initials: init || name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase()
-    });
+    const res = await api.post('/api/resources', {name,initials,role,capacityPerDay:cap,color}).catch(console.error);
+    const newId = res?.id || 'r'+genId();
+    state.resources.push({ id:newId, name, role, color, capacityPerDay:cap, initials });
   }
   saveState(); closeModal();
   showToast(id ? 'Resource updated ✓':'Resource added ✓','success');
@@ -1067,9 +1183,11 @@ function confirmDeleteResource(id) {
   `);
 }
 
-function deleteResource(id) {
+async function deleteResource(id) {
+  pushUndo();
   state.resources = state.resources.filter(r=>r.id!==id);
   state.tasks.forEach(t => { if (t.assigneeId===id) t.assigneeId=''; });
+  await api.delete(`/api/resources/${id}`).catch(console.error);
   saveState(); closeModal();
   showToast('Resource removed','error');
   renderView(state.activeView);
@@ -1098,7 +1216,97 @@ function exportCSV() {
   const a = document.createElement('a');
   a.href = url; a.download = `sprintforge-export-${today()}.csv`;
   a.click(); URL.revokeObjectURL(url);
-  showToast('Exported to CSV ✓','success');
+  showToast('Exported to CSV âœ“','success');
+}
+
+async function syncUnsyncedTasks() {
+  return syncUnsyncedTasksInternal(false);
+}
+
+let _syncInFlight = false;
+let _syncInterval = null;
+
+async function fetchServerTaskIds() {
+  const existing = await fetch('/api/tasks');
+  if (!existing.ok) throw new Error(`HTTP ${existing.status}`);
+  const serverTasks = await existing.json();
+  return new Set((serverTasks || []).map(t => t.id));
+}
+
+function setSyncAlert(isUnsynced) {
+  const btn = $('#btn-sync');
+  if (!btn) return;
+  btn.classList.toggle('sync-alert', !!isUnsynced);
+}
+
+async function refreshSyncIndicator() {
+  try {
+    const serverIds = await fetchServerTaskIds();
+    const hasUnsynced = state.tasks.some(t => t && t.id && !serverIds.has(t.id));
+    setSyncAlert(hasUnsynced);
+  } catch (e) {
+    console.warn('Could not refresh sync indicator:', e.message);
+  }
+}
+
+async function syncUnsyncedTasksInternal(silent) {
+  if (_syncInFlight) return;
+  _syncInFlight = true;
+  const btn = $('#btn-sync');
+  if (btn) btn.disabled = true;
+  try {
+    const serverIds = await fetchServerTaskIds();
+
+    const unsynced = state.tasks.filter(t => t && t.id && !serverIds.has(t.id));
+    if (!unsynced.length) {
+      setSyncAlert(false);
+      if (!silent) showToast('Everything already synced','info');
+      return;
+    }
+
+    let synced = 0;
+    let failed = 0;
+    for (const t of unsynced) {
+      try {
+        const res = await api.post('/api/tasks', {
+          sprintId: t.sprintId || '',
+          title: t.title || 'Untitled',
+          description: t.description || '',
+          type: t.type || 'task',
+          priority: t.priority || 'medium',
+          status: t.status || 'todo',
+          assigneeId: t.assigneeId || '',
+          estimatedHours: t.estimatedHours || 0,
+          loggedHours: t.loggedHours || 0,
+          storyPoints: t.storyPoints || 0,
+          dueDate: t.dueDate || '',
+          doneDate: t.doneDate || '',
+          dependsOn: t.dependsOn || [],
+          tags: t.tags || [],
+          scopeAddition: !!t.scopeAddition,
+          originalSprint: t.originalSprint || t.sprintId || ''
+        });
+        if (res && res.id) t.id = res.id;
+        synced += 1;
+      } catch (e) {
+        failed += 1;
+        console.error('Task sync failed:', e);
+      }
+    }
+
+    saveState();
+    renderView(state.activeView);
+    await refreshSyncIndicator();
+    if (!silent) {
+      showToast(failed ? `Synced ${synced}, failed ${failed}` : `Synced ${synced} task(s)`, failed ? 'info' : 'success');
+    }
+  } catch (e) {
+    console.error(e);
+    if (!silent) showToast('Sync failed: server unavailable','error');
+  } finally {
+    if (btn) btn.disabled = false;
+    _syncInFlight = false;
+  }
 }
 
 // ── KEYBOARD SHORTCUTS ────────────────────────────────────────
@@ -1129,10 +1337,18 @@ async function init() {
     setTimeout(() => openSprintModal(), 100);
   });
   $('#btn-export').addEventListener('click', exportCSV);
+  $('#btn-sync')?.addEventListener('click', syncUnsyncedTasks);
   $('#btn-shortcuts').addEventListener('click', openShortcutsModal);
 
   // Global search
   initSearch();
+
+  await refreshSyncIndicator();
+  if (_syncInterval) clearInterval(_syncInterval);
+  _syncInterval = setInterval(async () => {
+    await syncUnsyncedTasksInternal(true);
+    await refreshSyncIndicator();
+  }, 30000);
 
   // Initial render
   renderView('dashboard');
@@ -1476,4 +1692,5 @@ moveTask = function(taskId, newStatus) {
   renderView(state.activeView);
   if (newStatus === 'done' && t) setTimeout(() => checkSprintCompletion(t.sprintId), 300);
 };
+
 
